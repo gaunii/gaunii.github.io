@@ -3,387 +3,686 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>도서 위치 검색기 (세로쓰기 정밀 추적 버전)</title>
+<title>도서 위치 검색기</title>
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 <style>
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;700&family=JetBrains+Mono:wght@400;700&display=swap');
+
 :root {
---primary-color: #3498db;
---search-color: #2ecc71;
---reset-color: #e74c3c;
---bg-color: #f5f6fa;
---container-bg: #ffffff;
---text-color: #2f3640;
+  --bg: #0d0f14;
+  --panel: #161a24;
+  --border: #252b3b;
+  --accent: #00e5a0;
+  --accent2: #4d9fff;
+  --warn: #ff4d6d;
+  --text: #e8ecf4;
+  --text2: #7a8299;
+  --radius: 14px;
 }
+
+* { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
 
 body {
-font-family: 'Noto Sans KR', sans-serif;
-background-color: var(--bg-color);
-margin: 0;
-padding: 15px;
-color: var(--text-color);
-display: flex;
-flex-direction: column;
-align-items: center;
-}
-
-h1 {
-font-size: 1.4rem;
-color: #1abc9c;
-margin-bottom: 15px;
-text-align: center;
-}
-
-.control-box {
-width: 100%;
-max-width: 500px;
-display: flex;
-flex-direction: column;
-gap: 10px;
-margin-bottom: 15px;
-box-sizing: border-box;
-}
-
-.input-row {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Noto Sans KR', sans-serif;
+  min-height: 100vh;
   display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 16px;
+  padding-bottom: 32px;
+}
+
+/* ── 헤더 ── */
+header {
   width: 100%;
-  gap: 8px;
+  max-width: 520px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 18px;
+  padding-top: 4px;
 }
-
-input {
-flex: 1;
-padding: 10px 15px;
-font-size: 0.95rem;
-border: 2px solid #ced4da;
-border-radius: 30px;
-outline: none;
-box-sizing: border-box;
+.logo {
+  width: 36px; height: 36px;
+  background: linear-gradient(135deg, var(--accent), var(--accent2));
+  border-radius: 10px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 18px; flex-shrink: 0;
 }
+header h1 {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 14px; font-weight: 700;
+  letter-spacing: -.01em;
+  line-height: 1.3;
+}
+header h1 span { display: block; font-size: 10px; font-weight: 400; color: var(--text2); margin-top: 1px; }
 
-input:focus { border-color: var(--primary-color); }
+/* ── 입력 영역 ── */
+.input-wrap {
+  width: 100%; max-width: 520px;
+  display: flex; gap: 8px;
+  margin-bottom: 10px;
+}
+.input-wrap input {
+  flex: 1;
+  background: var(--panel);
+  border: 1.5px solid var(--border);
+  border-radius: 40px;
+  padding: 11px 18px;
+  font-size: 14px;
+  color: var(--text);
+  font-family: 'Noto Sans KR', sans-serif;
+  outline: none;
+  transition: border-color .2s;
+}
+.input-wrap input::placeholder { color: var(--text2); }
+.input-wrap input:focus { border-color: var(--accent); }
 
+/* ── 버튼 행 ── */
+.btn-row {
+  width: 100%; max-width: 520px;
+  display: flex; gap: 8px;
+  margin-bottom: 12px;
+}
 .btn {
-padding: 10px 20px;
-font-size: 0.95rem;
-font-weight: bold;
-color: #fff;
-border: none;
-border-radius: 30px;
-cursor: pointer;
-white-space: nowrap;
-flex: 1;
-transition: background-color 0.2s;
+  flex: 1; padding: 11px 10px;
+  border: none; border-radius: 40px;
+  font-size: 13px; font-weight: 700;
+  font-family: 'Noto Sans KR', sans-serif;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center; gap: 5px;
+  transition: opacity .15s, transform .1s;
+}
+.btn:active { transform: scale(.97); }
+.btn:disabled { opacity: .4; cursor: not-allowed; }
+.btn-capture { background: var(--accent2); color: #fff; }
+.btn-search  { background: var(--accent);  color: #000; display: none; }
+.btn-reset   { background: var(--panel);   color: var(--text); border: 1.5px solid var(--border); display: none; }
+
+/* ── 카메라 / 캔버스 ── */
+#display-wrap {
+  width: 100%; max-width: 520px;
+  position: relative;
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: #000;
+  border: 1.5px solid var(--border);
+}
+#webcam, #overlay {
+  display: block;
+  width: 100%; height: auto;
+}
+#overlay {
+  position: absolute; top: 0; left: 0;
+  width: 100%; height: 100%;
+  display: none;
+  pointer-events: none;
 }
 
-.btn:disabled { background-color: #95a5a6; cursor: not-allowed; }
-
-#capture-btn { background-color: var(--primary-color); }
-#search-btn { background-color: var(--search-color); display: none; }
-#reset-btn { background-color: var(--reset-color); display: none; }
-
-#display-container {
-position: relative;
-width: 100%;
-max-width: 500px;
-border-radius: 12px;
-overflow: hidden;
-box-shadow: 0 8px 20px rgba(0,0,0,0.15);
-background-color: #000;
-}
-
-video, canvas {
-position: absolute;
-top: 0;
-left: 0;
-width: 100%;
-height: 100%;
-}
-
-video { object-fit: contain; }
-canvas { object-fit: contain; z-index: 1; display: none; }
-
+/* ── 상태 패널 ── */
 #status-panel {
-width: 100%;
-max-width: 500px;
-margin-top: 12px;
-background: var(--container-bg);
-padding: 12px 15px;
-border-radius: 10px;
-border: 1px solid #dcdde1;
-box-sizing: border-box;
-font-size: 0.9rem;
-text-align: center;
+  width: 100%; max-width: 520px;
+  margin-top: 12px;
+  background: var(--panel);
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius);
+  padding: 13px 16px;
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--text2);
+}
+#status-panel .hl  { color: var(--accent);  font-weight: 700; }
+#status-panel .err { color: var(--warn);    font-weight: 700; }
+#status-panel .inf { color: var(--accent2); }
+
+/* ── 진행 바 ── */
+#prog-wrap {
+  width: 100%; max-width: 520px;
+  margin-top: 8px;
+  display: none;
+}
+.prog-bar-bg {
+  height: 4px; background: var(--border);
+  border-radius: 2px; overflow: hidden;
+}
+.prog-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent), var(--accent2));
+  border-radius: 2px;
+  transition: width .3s;
+  width: 0%;
+}
+.prog-label {
+  font-size: 10px; color: var(--text2);
+  font-family: 'JetBrains Mono', monospace;
+  margin-bottom: 5px;
+  display: flex; justify-content: space-between;
 }
 
-.highlight { color: #e74c3c; font-weight: bold; }
+/* ── 인식 결과 칩 ── */
+#word-list {
+  width: 100%; max-width: 520px;
+  margin-top: 10px;
+  display: none;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.word-chip {
+  padding: 3px 10px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  font-size: 11px;
+  color: var(--text2);
+  font-family: 'JetBrains Mono', monospace;
+}
+.word-chip.match {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: rgba(0,229,160,.08);
+}
 </style>
 </head>
 <body>
 
-<h1>🔍 도서 위치 검색기 (세로글씨 보정)</h1>
+<header>
+  <div class="logo">🔍</div>
+  <h1>LIBRARY FINDER<span>세로글씨 정밀 인식 · Tesseract v5</span></h1>
+</header>
 
-<div class="control-box">
-    <div class="input-row">
-        <input type="text" id="book-input" placeholder="책 제목 입력 (예: 완득이)">
-    </div>
-    <div class="input-row" id="btn-group">
-        <button id="capture-btn" class="btn">📸 사진 찍기</button>
-        <button id="search-btn" class="btn">🔍 책 찾기</button>
-        <button id="reset-btn" class="btn">🔄 다시 찍기</button>
-    </div>
+<div class="input-wrap">
+  <input type="text" id="book-input" placeholder="책 제목 입력 (예: 완득이)">
 </div>
 
-<div id="display-container">
-<video id="webcam" autoplay playsinline muted></video>
-<canvas id="overlay"></canvas>
+<div class="btn-row">
+  <button id="capture-btn" class="btn btn-capture">📸 사진 찍기</button>
+  <button id="search-btn"  class="btn btn-search">🔍 책 찾기</button>
+  <button id="reset-btn"   class="btn btn-reset">↩ 다시</button>
+</div>
+
+<div id="display-wrap">
+  <video id="webcam" autoplay playsinline muted></video>
+  <canvas id="overlay"></canvas>
+</div>
+
+<div id="prog-wrap">
+  <div class="prog-label">
+    <span id="prog-label">준비 중...</span>
+    <span id="prog-pct">0%</span>
+  </div>
+  <div class="prog-bar-bg"><div class="prog-bar-fill" id="prog-fill"></div></div>
 </div>
 
 <div id="status-panel">
-<div id="status-text">카메라 연결을 준비 중입니다...</div>
+  <span id="status-text">카메라를 연결하는 중입니다...</span>
 </div>
 
+<div id="word-list"></div>
+
 <script>
-const container = document.getElementById('display-container');
-const video = document.getElementById('webcam');
-const canvas = document.getElementById('overlay');
-const ctx = canvas.getContext('2d');
-const bookInput = document.getElementById('book-input');
+/* ═══════════════════════════════════════════
+   요소 참조
+═══════════════════════════════════════════ */
+const video      = document.getElementById('webcam');
+const overlay    = document.getElementById('overlay');
+const ctx        = overlay.getContext('2d');
+const wrap       = document.getElementById('display-wrap');
+const bookInput  = document.getElementById('book-input');
 const captureBtn = document.getElementById('capture-btn');
-const searchBtn = document.getElementById('search-btn');
-const resetBtn = document.getElementById('reset-btn');
+const searchBtn  = document.getElementById('search-btn');
+const resetBtn   = document.getElementById('reset-btn');
 const statusText = document.getElementById('status-text');
+const progWrap   = document.getElementById('prog-wrap');
+const progFill   = document.getElementById('prog-fill');
+const progLabel  = document.getElementById('prog-label');
+const progPct    = document.getElementById('prog-pct');
+const wordList   = document.getElementById('word-list');
 
-let capturedImageElement = null; 
+let capturedImg = null;
 
+/* ═══════════════════════════════════════════
+   상태 / 진행
+═══════════════════════════════════════════ */
+function setStatus(html) { statusText.innerHTML = html; }
+function setProgress(label, pct) {
+  progLabel.textContent = label;
+  progPct.textContent   = Math.round(pct) + '%';
+  progFill.style.width  = pct + '%';
+}
+function showProgress(show) { progWrap.style.display = show ? 'block' : 'none'; }
+
+/* ═══════════════════════════════════════════
+   카메라 초기화
+═══════════════════════════════════════════ */
 async function initCamera() {
-    statusText.innerText = "카메라를 연결하는 중...";
-    const constraintsOptions = [
-        { video: { facingMode: "environment", width: { ideal: 1920 }, height: { ideal: 1080 } } },
-        { video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } } },
-        { video: true }
-    ];
+  setStatus('카메라 연결 중...');
+  const opts = [
+    { video: { facingMode:'environment', width:{ideal:1920}, height:{ideal:1080} } },
+    { video: { facingMode:'environment', width:{ideal:1280}, height:{ideal:720}  } },
+    { video: true }
+  ];
+  let stream = null;
+  for (const o of opts) {
+    try { stream = await navigator.mediaDevices.getUserMedia(o); if (stream) break; }
+    catch(e) {}
+  }
+  if (!stream) { setStatus('<span class="err">카메라 권한이 없습니다. 브라우저 설정을 확인하세요.</span>'); return; }
 
-    let stream = null;
-    for (let currentConstraints of constraintsOptions) {
-        try {
-            stream = await navigator.mediaDevices.getUserMedia(currentConstraints);
-            if (stream) break;
-        } catch (e) {
-            console.warn("카메라 셋업 실패:", e);
-        }
-    }
-
-    if (stream) {
-        video.srcObject = stream;
-        video.play().catch(e => console.log(e));
-        video.addEventListener('loadedmetadata', () => {
-            const aspect = video.videoHeight / video.videoWidth;
-            container.style.height = (container.clientWidth * aspect) + "px";
-            statusText.innerText = "준비 완료! 책등 글씨가 잘 보이게 찍어주세요.";
-        });
-    } else {
-        statusText.innerHTML = "<span style='color:red;'>카메라 권한 거부됨.</span>";
-    }
+  video.srcObject = stream;
+  await video.play().catch(()=>{});
+  video.addEventListener('loadedmetadata', updateLayout);
+  setStatus('준비 완료! <span class="hl">책등 글씨가 잘 보이도록</span> 촬영해 주세요.');
 }
 
+function updateLayout() {
+  if (!video.videoWidth) return;
+  wrap.style.aspectRatio = video.videoWidth + '/' + video.videoHeight;
+}
+
+window.addEventListener('resize', updateLayout);
 initCamera();
 
-window.addEventListener('resize', () => {
-    if (video.videoWidth) {
-        const aspect = video.videoHeight / video.videoWidth;
-        container.style.height = (container.clientWidth * aspect) + "px";
-    }
+/* ═══════════════════════════════════════════
+   촬영
+═══════════════════════════════════════════ */
+captureBtn.addEventListener('click', () => {
+  if (!video.videoWidth) { alert('카메라 준비 중입니다.'); return; }
+
+  overlay.width  = video.videoWidth;
+  overlay.height = video.videoHeight;
+  ctx.drawImage(video, 0, 0);
+  overlay.style.display = 'block';
+
+  capturedImg = new Image();
+  capturedImg.src = overlay.toDataURL('image/jpeg', 1.0);
+
+  captureBtn.style.display = 'none';
+  searchBtn.style.display  = 'inline-flex';
+  resetBtn.style.display   = 'inline-flex';
+  setStatus('📸 촬영 완료! <span class="inf">책 제목을 입력하고 [책 찾기]를 누르세요.</span>');
 });
 
-captureBtn.addEventListener('click', captureSnapshot);
-searchBtn.addEventListener('click', searchBookInSnapshot);
-resetBtn.addEventListener('click', resetToCamera);
+/* ═══════════════════════════════════════════
+   초기화
+═══════════════════════════════════════════ */
+resetBtn.addEventListener('click', () => {
+  capturedImg = null;
+  ctx.clearRect(0, 0, overlay.width, overlay.height);
+  overlay.style.display = 'none';
+  captureBtn.style.display = 'inline-flex';
+  searchBtn.style.display  = 'none';
+  resetBtn.style.display   = 'none';
+  wordList.style.display   = 'none';
+  wordList.innerHTML        = '';
+  showProgress(false);
+  setStatus('카메라 재개. <span class="hl">[사진 찍기]</span>를 누르세요.');
+});
 
-// 지독한 명암 차이를 극대화하여 글씨 윤곽만 남기는 강력한 이진화 필터
-function enhanceTextContrast(context, width, height) {
-    const imageData = context.getImageData(0, 0, width, height);
-    const data = imageData.data;
-    for (let i = 0; i < data.length; i += 4) {
-        const gray = 0.299 * data[i] + 0.587 * data[i+1] + 0.114 * data[i+2];
-        // 어설픈 회색조는 전부 날리고 완전한 블랙 & 화이트로 변환
-        const v = (gray > 110) ? 255 : 0;
-        data[i] = v; data[i+1] = v; data[i+2] = v;
+/* ═══════════════════════════════════════════
+   ① 적응형 이진화 (Adaptive Thresholding)
+   지역 평균보다 어두운 픽셀 → 검정(글자)
+   단순 전역 임계값보다 조명 불균일에 강함
+═══════════════════════════════════════════ */
+function adaptiveThreshold(srcCanvas, blockR = 20, C = 8) {
+  const dst = document.createElement('canvas');
+  dst.width  = srcCanvas.width;
+  dst.height = srcCanvas.height;
+  const dctx = dst.getContext('2d');
+  dctx.drawImage(srcCanvas, 0, 0);
+
+  const id   = dctx.getImageData(0, 0, dst.width, dst.height);
+  const d    = id.data;
+  const W    = dst.width, H = dst.height;
+
+  // 그레이스케일 먼저
+  const gray = new Uint8Array(W * H);
+  for (let i = 0; i < gray.length; i++) {
+    gray[i] = (0.299 * d[i*4] + 0.587 * d[i*4+1] + 0.114 * d[i*4+2]) | 0;
+  }
+
+  // 박스 블러 적분 이미지
+  const integral = new Float64Array((W+1) * (H+1));
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      integral[(y+1)*(W+1)+(x+1)] =
+        gray[y*W+x]
+        + integral[y*(W+1)+(x+1)]
+        + integral[(y+1)*(W+1)+x]
+        - integral[y*(W+1)+x];
     }
-    context.putImageData(imageData, 0, 0);
-}
+  }
 
-function captureSnapshot() {
-    if (!video.videoWidth) { alert("카메라 준비 중입니다."); return; }
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-    
-    capturedImageElement = new Image();
-    capturedImageElement.src = canvas.toDataURL('image/jpeg', 1.0);
-    canvas.style.display = "block";
-
-    captureBtn.style.display = "none";
-    searchBtn.style.display = "inline-block";
-    resetBtn.style.display = "inline-block";
-    statusText.innerHTML = "📸 사진 촬영 완료! <br>[책 찾기]를 누르면 음절 단위 분석을 시작합니다.";
-}
-
-// [핵심 엔진] 낱글자 조합 기반 세로쓰기 탐색 알고리즘
-async function searchBookInSnapshot() {
-    const targetTitle = bookInput.value.trim().replace(/\s+/g, ""); // 검색어 공백 제거
-    if (!targetTitle) { alert("책 제목을 입력하세요."); bookInput.focus(); return; }
-
-    searchBtn.disabled = true;
-    resetBtn.disabled = true;
-    searchBtn.textContent = "낱글자 추적 중...";
-    statusText.innerHTML = `⏳ 세로/가로 글자 자장을 결합하여 <b>"${targetTitle}"</b>을 조합하고 있습니다...`;
-
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.drawImage(capturedImageElement, 0, 0, canvas.width, canvas.height);
-
-    const ocrCanvas = document.createElement('canvas');
-    ocrCanvas.width = canvas.width; ocrCanvas.height = canvas.height;
-    const ocrCtx = ocrCanvas.getContext('2d');
-    ocrCtx.drawImage(capturedImageElement, 0, 0, ocrCanvas.width, ocrCanvas.height);
-    enhanceTextContrast(ocrCtx, ocrCanvas.width, ocrCanvas.height);
-
-    try {
-        const worker = await Tesseract.createWorker(['kor', 'eng']);
-        const ret = await worker.recognize(ocrCanvas);
-        
-        // [변경 포인트] 단어 단위가 아닌 기호/음절(symbols) 단위까지 파괴하여 데이터 획득
-        const symbols = [];
-        if (ret.data && ret.data.blocks) {
-            ret.data.blocks.forEach(block => {
-                block.paragraphs.forEach(para => {
-                    para.lines.forEach(line => {
-                        line.words.forEach(word => {
-                            word.symbols.forEach(sym => {
-                                // 노이즈 문자를 제하고 의미 있는 한글/영문/숫자만 수집
-                                const cleanSym = sym.text.replace(/[^ㄱ-ㅎ|ㅏ-ㅣ|가-힣|a-zA-Z0-9]/g, "");
-                                if (cleanSym) {
-                                    symbols.push({ text: cleanSym, bbox: sym.bbox });
-                                }
-                            });
-                        });
-                    });
-                });
-            });
-        }
-        await worker.terminate();
-
-        let finalTargetBbox = null;
-        
-        // 낱글자 순회 탐색 시작
-        for (let i = 0; i < symbols.length; i++) {
-            // 사용자가 입력한 단어의 첫 글자(예: '완득이'의 '완')를 만나면 추적 시동
-            if (symbols[i].text === targetTitle[0]) {
-                let currentMatchedCount = 1;
-                let trackBoxes = [symbols[i].bbox];
-                let lastBbox = symbols[i].bbox;
-
-                // 첫 글자 발견 후, 나머지 글자들('득', '이')이 주변에 배치되어 있는지 기하학적 검사
-                for (let j = 1; j < targetTitle.length; j++) {
-                    const nextChar = targetTitle[j];
-                    
-                    // 나머지 모든 글자 풀을 뒤져서 수직 하단 또는 수평 우측에 연속되는지 대조
-                    let foundNext = symbols.find(subSym => {
-                        if (subSym.text !== nextChar) return false;
-                        
-                        const b = subSym.bbox;
-                        // 세로쓰기 조건 검증: 직전 글자의 아래쪽에 위치하는가?
-                        const isVerticalNext = Math.abs((lastBbox.x0 + lastBbox.x1)/2 - (b.x0 + b.x1)/2) < (lastBbox.x1 - lastBbox.x0) * 1.5 && 
-                                               (b.y0 >= lastBbox.y0 && b.y0 <= lastBbox.y1 + (lastBbox.y1 - lastBbox.y0) * 2.5);
-                        
-                        // 가로쓰기 조건 검증: 직전 글자의 오른쪽에 위치하는가?
-                        const isHorizontalNext = Math.abs((lastBbox.y0 + lastBbox.y1)/2 - (b.y0 + b.y1)/2) < (lastBbox.y1 - lastBbox.y0) * 1.0 && 
-                                                 (b.x0 >= lastBbox.x0 && b.x0 <= lastBbox.x1 + (lastBbox.x1 - lastBbox.x0) * 2.5);
-
-                        return isVerticalNext || isHorizontalNext;
-                    });
-
-                    if (foundNext) {
-                        currentMatchedCount++;
-                        trackBoxes.push(foundNext.bbox);
-                        lastBbox = foundNext.bbox; // 추적 기준점 갱신
-                    } else {
-                        break; // 연속성이 끊기면 실패 처리
-                    }
-                }
-
-                // 입력한 제목의 모든 글자가 끊기지 않고 연결되었다면 최종 타겟으로 인정!
-                if (currentMatchedCount === targetTitle.length) {
-                    finalTargetBbox = {
-                        x0: Math.min(...trackBoxes.map(b => b.x0)),
-                        y0: Math.min(...trackBoxes.map(b => b.y0)),
-                        x1: Math.max(...trackBoxes.map(b => b.x1)),
-                        y1: Math.max(...trackBoxes.map(b => b.y1))
-                    };
-                    break;
-                }
-            }
-        }
-
-        if (finalTargetBbox) {
-            statusText.innerHTML = `🎯 세로쓰기 조합 성공! <span style='color:#2ecc71; font-weight:bold;'>"${targetTitle}"</span> 위치를 고정했습니다.`;
-            drawCombinedUI(finalTargetBbox);
-        } else {
-            statusText.innerHTML = `❌ <span style='color:#e74c3c; font-weight:bold;'>글자 결합에 실패했습니다. 더 정면에서 가까이 찍어보세요.</span>`;
-            drawNotFoundUI();
-        }
-
-    } catch (error) {
-        console.error(error);
-        statusText.innerHTML = `<span style='color:red;'>오류 발생: ${error.message}</span>`;
-    } finally {
-        searchBtn.disabled = false;
-        resetBtn.disabled = false;
-        searchBtn.textContent = "🔍 책 찾기";
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const x0 = Math.max(0, x - blockR), x1 = Math.min(W-1, x + blockR);
+      const y0 = Math.max(0, y - blockR), y1 = Math.min(H-1, y + blockR);
+      const cnt  = (x1 - x0 + 1) * (y1 - y0 + 1);
+      const sum  = integral[(y1+1)*(W+1)+(x1+1)]
+                 - integral[y0*(W+1)+(x1+1)]
+                 - integral[(y1+1)*(W+1)+x0]
+                 + integral[y0*(W+1)+x0];
+      const mean = sum / cnt;
+      const v    = gray[y*W+x] < mean - C ? 0 : 255;
+      const idx  = (y*W+x)*4;
+      d[idx] = d[idx+1] = d[idx+2] = v; d[idx+3] = 255;
     }
+  }
+  dctx.putImageData(id, 0, 0);
+  return dst;
 }
 
-function resetToCamera() {
-    capturedImageElement = null;
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    canvas.style.display = "none";
-    captureBtn.style.display = "inline-block";
-    searchBtn.style.display = "none";
-    resetBtn.style.display = "none";
-    statusText.innerText = "카메라 재개됨. [사진 찍기]를 누르세요.";
+/* ═══════════════════════════════════════════
+   ② 캔버스 회전 유틸
+═══════════════════════════════════════════ */
+function rotateCanvas(src, deg) {
+  const dst = document.createElement('canvas');
+  const rad  = deg * Math.PI / 180;
+  if (deg === 90 || deg === 270) { dst.width = src.height; dst.height = src.width; }
+  else { dst.width = src.width; dst.height = src.height; }
+  const c = dst.getContext('2d');
+  c.translate(dst.width/2, dst.height/2);
+  c.rotate(rad);
+  c.drawImage(src, -src.width/2, -src.height/2);
+  return dst;
 }
 
-// 결합된 전체 글자 영역 묶어서 크게 사각형 박싱하기
-function drawCombinedUI(bbox) {
-    const xmin = bbox.x0;
-    const ymin = bbox.y0;
-    const boxWidth = bbox.x1 - bbox.x0;
-    const boxHeight = bbox.y1 - bbox.y0;
-    
-    const centerX = xmin + (boxWidth / 2);
-    const targetTopY = ymin - 8;
-
-    ctx.strokeStyle = '#2ecc71';
-    ctx.lineWidth = Math.max(5, canvas.width / 200);
-    ctx.strokeRect(xmin, ymin, boxWidth, boxHeight);
-
-    ctx.fillStyle = '#e74c3c';
-    ctx.beginPath();
-    const arrowSize = Math.max(15, canvas.width / 60);
-    ctx.moveTo(centerX - arrowSize, targetTopY - (arrowSize * 1.3));
-    ctx.lineTo(centerX + arrowSize, targetTopY - (arrowSize * 1.3));
-    ctx.lineTo(centerX, targetTopY);
-    ctx.closePath();
-    ctx.fill();
+/* ═══════════════════════════════════════════
+   ③ Levenshtein 기반 유사도
+═══════════════════════════════════════════ */
+function similarity(a, b) {
+  a = a.replace(/\s+/g,''); b = b.replace(/\s+/g,'');
+  if (!a.length || !b.length) return 0;
+  const dp = Array.from({length:a.length+1}, (_,i) =>
+    Array.from({length:b.length+1}, (_,j) => i || j));
+  for (let i=1;i<=a.length;i++)
+    for (let j=1;j<=b.length;j++)
+      dp[i][j] = a[i-1]===b[j-1]
+        ? dp[i-1][j-1]
+        : 1 + Math.min(dp[i-1][j], dp[i][j-1], dp[i-1][j-1]);
+  return 1 - dp[a.length][b.length] / Math.max(a.length, b.length);
 }
 
-function drawNotFoundUI() {
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.fillStyle = '#e74c3c';
-    ctx.font = 'bold 32px "Noto Sans KR", sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText('해당 책이 없습니다 ❌', canvas.width / 2, canvas.height / 2);
+/* ═══════════════════════════════════════════
+   ④ 메인 OCR + 검색
+═══════════════════════════════════════════ */
+searchBtn.addEventListener('click', runSearch);
+
+async function runSearch() {
+  const target = bookInput.value.trim().replace(/\s+/g,'');
+  if (!target)  { alert('책 제목을 입력하세요.'); bookInput.focus(); return; }
+  if (!capturedImg) { alert('먼저 사진을 찍으세요.'); return; }
+
+  searchBtn.disabled = true;
+  resetBtn.disabled  = true;
+  wordList.style.display = 'none';
+  wordList.innerHTML = '';
+  showProgress(true);
+  setProgress('이미지 전처리 중...', 2);
+
+  // 원본 복원
+  ctx.clearRect(0, 0, overlay.width, overlay.height);
+  ctx.drawImage(capturedImg, 0, 0);
+
+  // 전처리: 적응형 이진화
+  const baseCv = document.createElement('canvas');
+  baseCv.width = overlay.width; baseCv.height = overlay.height;
+  baseCv.getContext('2d').drawImage(capturedImg, 0, 0);
+  const enhanced = adaptiveThreshold(baseCv, 24, 6);
+
+  // 4가지 회전 각도 시도 (0°, 90°CCW, 90°CW, 180°)
+  const angles  = [0, 90, 270, 180];
+  const results = [];
+
+  const worker = await Tesseract.createWorker('kor+eng', 1, {
+    logger: m => {
+      if (m.status === 'recognizing text') {
+        const base = results.length * 25;
+        setProgress(`회전 ${angles[results.length]}° 인식 중...`, base + m.progress * 24);
+        progPct.textContent = Math.round(base + m.progress * 24) + '%';
+      }
+    }
+  });
+
+  // PSM 설정: 6 = 단일 균일 텍스트 블록, OEM 1 = LSTM 전용
+  await worker.setParameters({
+    tessedit_pageseg_mode: '6',
+    tessedit_ocr_engine_mode: '1',
+    preserve_interword_spaces: '1',
+  });
+
+  for (let ai = 0; ai < angles.length; ai++) {
+    setProgress(`${angles[ai]}° 회전 인식 중 (${ai+1}/${angles.length})...`, ai * 25);
+    const rotated = rotateCanvas(enhanced, angles[ai]);
+    const ret = await worker.recognize(rotated);
+    results.push({ angle: angles[ai], data: ret.data, rotCanvas: rotated });
+  }
+
+  await worker.terminate();
+  setProgress('분석 완료', 100);
+
+  // 모든 symbols 수집 + 회전 역변환 좌표 계산
+  const allSymbols = [];
+  for (const r of results) {
+    if (!r.data.blocks) continue;
+    const rc = r.rotCanvas;
+
+    r.data.blocks.forEach(bl => bl.paragraphs.forEach(pa => pa.lines.forEach(li => li.words.forEach(wo => {
+      wo.symbols.forEach(sym => {
+        const ch = sym.text.replace(/[^ㄱ-ㅎㅏ-ㅣ가-힣a-zA-Z0-9]/g,'');
+        if (!ch) return;
+
+        // 회전 좌표 → 원본 좌표 역변환
+        const b = sym.bbox;
+        let ox0, oy0, ox1, oy1;
+        const W = overlay.width, H = overlay.height;
+        const rW = rc.width, rH = rc.height;
+
+        if (r.angle === 0) {
+          ox0=b.x0; oy0=b.y0; ox1=b.x1; oy1=b.y1;
+        } else if (r.angle === 90) {
+          // CCW 90: rotated(rx,ry) → orig(ry, W-rx)  (W=orig.width)
+          ox0 = b.y0;        oy0 = W - b.x1;
+          ox1 = b.y1;        oy1 = W - b.x0;
+        } else if (r.angle === 270) {
+          // CW 90: rotated(rx,ry) → orig(H-ry, rx)  (H=orig.height)
+          ox0 = H - b.y1;   oy0 = b.x0;
+          ox1 = H - b.y0;   oy1 = b.x1;
+        } else if (r.angle === 180) {
+          ox0 = W - b.x1;   oy0 = H - b.y1;
+          ox1 = W - b.x0;   oy1 = H - b.y0;
+        }
+
+        allSymbols.push({
+          text: ch,
+          conf: sym.confidence,
+          angle: r.angle,
+          bbox: { x0:ox0, y0:oy0, x1:ox1, y1:oy1 }
+        });
+      });
+    }))));
+  }
+
+  // 인식된 고유 단어 칩 표시
+  const uniqueWords = [...new Set(allSymbols.map(s=>s.text))].sort();
+  if (uniqueWords.length) {
+    wordList.style.display = 'flex';
+    wordList.innerHTML = uniqueWords.map(w => {
+      const isMatch = target.includes(w) || w.includes(target[0]);
+      return `<span class="word-chip${isMatch?' match':''}">${w}</span>`;
+    }).join('');
+  }
+
+  // 낱글자 조합 탐색
+  const found = findSequence(allSymbols, target);
+
+  if (found) {
+    const bb = found.bbox;
+    setStatus(`🎯 <span class="hl">"${target}"</span> 발견! · ${found.angle}° 회전 인식 · ${found.chars}글자 모두 일치`);
+    drawSuccess(bb);
+  } else {
+    // 퍼지 매칭 fallback: 단어 단위 유사도
+    const fuzzy = fuzzyFallback(allSymbols, target);
+    if (fuzzy) {
+      const bb = fuzzy.bbox;
+      setStatus(`🔶 <span class="inf">"${target}"</span>과 유사한 텍스트 발견 (${Math.round(fuzzy.score*100)}% 일치)`);
+      drawWarning(bb);
+    } else {
+      setStatus(`<span class="err">❌ "${target}"을 찾지 못했습니다. 더 가까이서, 정면으로 다시 촬영해 보세요.</span>`);
+      drawNotFound();
+    }
+  }
+
+  showProgress(false);
+  searchBtn.disabled = false;
+  resetBtn.disabled  = false;
+  searchBtn.textContent = '🔍 책 찾기';
+}
+
+/* ═══════════════════════════════════════════
+   낱글자 순차 탐색
+   기준 글자 → 세로/가로 방향으로 다음 글자 탐색
+═══════════════════════════════════════════ */
+function findSequence(symbols, target) {
+  for (let i = 0; i < symbols.length; i++) {
+    if (symbols[i].text !== target[0]) continue;
+
+    let matched = [symbols[i]];
+    let last    = symbols[i].bbox;
+
+    for (let j = 1; j < target.length; j++) {
+      const ch = target[j];
+      const cw  = last.x1 - last.x0;
+      const ch_ = last.y1 - last.y0;
+
+      const next = symbols.find(s => {
+        if (s.text !== ch) return false;
+        const b = s.bbox;
+
+        // 세로 방향 (아래): x 중앙 겹침 + y가 연속
+        const vertOk =
+          Math.abs((b.x0+b.x1)/2 - (last.x0+last.x1)/2) < cw * 1.8 &&
+          b.y0 >= last.y0 &&
+          b.y0 <= last.y1 + ch_ * 2.5;
+
+        // 가로 방향 (오른쪽): y 중앙 겹침 + x가 연속
+        const horizOk =
+          Math.abs((b.y0+b.y1)/2 - (last.y0+last.y1)/2) < ch_ * 1.2 &&
+          b.x0 >= last.x0 &&
+          b.x0 <= last.x1 + cw * 2.5;
+
+        return vertOk || horizOk;
+      });
+
+      if (!next) { matched = null; break; }
+      matched.push(next);
+      last = next.bbox;
+    }
+
+    if (matched && matched.length === target.length) {
+      const boxes = matched.map(m => m.bbox);
+      return {
+        angle: symbols[i].angle,
+        chars: target.length,
+        bbox: {
+          x0: Math.min(...boxes.map(b=>b.x0)),
+          y0: Math.min(...boxes.map(b=>b.y0)),
+          x1: Math.max(...boxes.map(b=>b.x1)),
+          y1: Math.max(...boxes.map(b=>b.y1)),
+        }
+      };
+    }
+  }
+  return null;
+}
+
+/* ═══════════════════════════════════════════
+   퍼지 매칭 fallback
+   인접 심볼들을 이어붙여 긴 문자열 만들고 유사도 비교
+═══════════════════════════════════════════ */
+function fuzzyFallback(symbols, target) {
+  let best = null;
+  // 연속된 N개 심볼 윈도우로 텍스트 조합
+  const W = Math.max(target.length, 3);
+  for (let i = 0; i <= symbols.length - W; i++) {
+    const chunk = symbols.slice(i, i + W);
+    const text  = chunk.map(s=>s.text).join('');
+    const score = similarity(text, target);
+    if (score > 0.55 && (!best || score > best.score)) {
+      const boxes = chunk.map(s=>s.bbox);
+      best = {
+        score, text,
+        bbox: {
+          x0: Math.min(...boxes.map(b=>b.x0)),
+          y0: Math.min(...boxes.map(b=>b.y0)),
+          x1: Math.max(...boxes.map(b=>b.x1)),
+          y1: Math.max(...boxes.map(b=>b.y1)),
+        }
+      };
+    }
+  }
+  return best;
+}
+
+/* ═══════════════════════════════════════════
+   렌더링
+═══════════════════════════════════════════ */
+function drawSuccess(bb) {
+  const cx = (bb.x0+bb.x1)/2;
+  const cy = bb.y0;
+  const bw = bb.x1-bb.x0, bh = bb.y1-bb.y0;
+  const as = Math.max(18, overlay.width/35);
+
+  // 하이라이트 박스
+  ctx.strokeStyle = '#00e5a0';
+  ctx.lineWidth   = Math.max(4, overlay.width/150);
+  ctx.shadowColor = '#00e5a0';
+  ctx.shadowBlur  = 12;
+  ctx.strokeRect(bb.x0, bb.y0, bw, bh);
+  ctx.shadowBlur = 0;
+
+  // 반투명 채우기
+  ctx.fillStyle = 'rgba(0,229,160,0.12)';
+  ctx.fillRect(bb.x0, bb.y0, bw, bh);
+
+  // 역삼각형 핀 ▼
+  ctx.fillStyle   = '#ff4d6d';
+  ctx.shadowColor = '#ff4d6d';
+  ctx.shadowBlur  = 16;
+  ctx.beginPath();
+  ctx.moveTo(cx - as, cy - as*1.6);
+  ctx.lineTo(cx + as, cy - as*1.6);
+  ctx.lineTo(cx, cy - 2);
+  ctx.closePath();
+  ctx.fill();
+  ctx.shadowBlur = 0;
+
+  // 핀 안 번호
+  ctx.fillStyle   = '#fff';
+  ctx.font        = `bold ${Math.round(as*0.9)}px 'JetBrains Mono'`;
+  ctx.textAlign   = 'center';
+  ctx.textBaseline= 'middle';
+  ctx.fillText('📍', cx, cy - as*1.1);
+}
+
+function drawWarning(bb) {
+  const bw=bb.x1-bb.x0, bh=bb.y1-bb.y0;
+  ctx.strokeStyle='#f39c12'; ctx.lineWidth=Math.max(3,overlay.width/180);
+  ctx.setLineDash([10,6]);
+  ctx.strokeRect(bb.x0,bb.y0,bw,bh);
+  ctx.setLineDash([]);
+  ctx.fillStyle='rgba(243,156,18,0.10)';
+  ctx.fillRect(bb.x0,bb.y0,bw,bh);
+}
+
+function drawNotFound() {
+  ctx.fillStyle='rgba(0,0,0,0.55)';
+  ctx.fillRect(0,0,overlay.width,overlay.height);
+  ctx.fillStyle='#ff4d6d';
+  ctx.font=`bold ${Math.round(overlay.width/18)}px 'Noto Sans KR'`;
+  ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.fillText('해당 책을 찾지 못했습니다 ❌', overlay.width/2, overlay.height/2);
 }
 </script>
 </body>
