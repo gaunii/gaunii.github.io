@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>도서 위치 실시간 가이드 (API 키 입력 패치)</title>
+<style>
+:root {
+--primary-color: #2ecc71;
+--accent-color: #e74c3c;
+--bg-color: #f5f6fa;
+--container-bg: #ffffff;
+--text-color: #2f3640;
+}
+
+body {
+font-family: 'Noto Sans KR', sans-serif;
+background-color: var(--bg-color);
+margin: 0;
+padding: 15px;
+color: var(--text-color);
+display: flex;
+flex-direction: column;
+align-items: center;
+}
+
+h1 {
+font-size: 1.4rem;
+color: #1abc9c;
+margin-bottom: 15px;
+text-align: center;
+}
+
+/* UI 구성 컨테이너 통합 */
+.control-box {
+width: 100%;
+max-width: 500px;
+display: flex;
+flex-direction: column;
+gap: 10px;
+margin-bottom: 15px;
+box-sizing: border-box;
+}
+
+.input-row {
+display: flex;
+width: 100%;
+gap: 8px;
+}
+
+input {
+flex: 1;
+padding: 10px 15px;
+font-size: 0.95rem;
+border: 2px solid #ced4da;
+border-radius: 30px;
+outline: none;
+box-sizing: border-box;
+}
+
+input:focus { border-color: var(--primary-color); }
+
+/* API 키 입력창 스타일 차별화 */
+#api-key-input {
+border-color: #34495e;
+background-color: #f8f9fa;
+}
+#api-key-input:focus { border-color: #34495e; }
+
+#search-btn {
+padding: 10px 25px;
+font-size: 0.95rem;
+font-weight: bold;
+color: #fff;
+background-color: var(--primary-color);
+border: none;
+border-radius: 30px;
+cursor: pointer;
+white-space: nowrap;
+}
+
+#search-btn:disabled { background-color: #95a5a6; }
+
+#display-container {
+position: relative;
+width: 100%;
+max-width: 500px;
+aspect-ratio: 4 / 3;
+border-radius: 12px;
+overflow: hidden;
+box-shadow: 0 8px 20px rgba(0,0,0,0.15);
+background-color: #000;
+}
+
+video, canvas {
+position: absolute;
+top: 0;
+left: 0;
+width: 100%;
+height: 100%;
+object-fit: cover;
+}
+
+#status-panel {
+width: 100%;
+max-width: 500px;
+margin-top: 12px;
+background: var(--container-bg);
+padding: 12px 15px;
+border-radius: 10px;
+border: 1px solid #dcdde1;
+box-sizing: border-box;
+font-size: 0.9rem;
+}
+
+.highlight { color: var(--accent-color); font-weight: bold; }
+.log-text { font-family: monospace; color: #7f8c8d; margin-top: 5px; font-size: 0.8rem; white-space: pre-wrap; word-break: break-all; }
+</style>
+</head>
+<body>
+
+<h1>🔍 도서 위치 검색기 (MOBILE)</h1>
+
+<div class="control-box">
+    <div class="input-row">
+        <input type="password" id="api-key-input" placeholder="Gemini API Key를 입력하세요">
+    </div>
+    <div class="input-row">
+        <input type="text" id="book-input" placeholder="책 제목 입력 (예: 완득이)">
+        <button id="search-btn">찾기</button>
+    </div>
+</div>
+
+<div id="display-container">
+<video id="webcam" autoplay playsinline muted></video>
+<canvas id="overlay"></canvas>
+</div>
+
+<div id="status-panel">
+<div><strong>상태:</strong> <span id="status-text">카메라 초기화 요청 중...</span></div>
+<div class="log-text" id="log-box">API Key를 입력하고 HTTPS 보안 연결 상태를 확인하세요.</div>
+</div>
+
+<script>
+// 기존 고정 변수 제거 후 요소 바인딩
+const video = document.getElementById('webcam');
+const canvas = document.getElementById('overlay');
+const ctx = canvas.getContext('2d');
+const apiKeyInput = document.getElementById('api-key-input');
+const bookInput = document.getElementById('book-input');
+const searchBtn = document.getElementById('search-btn');
+const statusText = document.getElementById('status-text');
+const logBox = document.getElementById('log-box');
+
+// 로컬 스토리지에 저장된 API 키가 있다면 자동으로 불러오기 (편의성 기능)
+if (localStorage.getItem('gemini_api_key')) {
+    apiKeyInput.value = localStorage.getItem('gemini_api_key');
+}
+
+// 1. 모바일 카메라 기기별 권한 예외 차단 로직 (유연한 순차 요청)
+async function initCamera() {
+    const constraintsOptions = [
+        { video: { facingMode: "environment", width: { ideal: 640 }, height: { ideal: 480 } } },
+        { video: { facingMode: "environment" } },
+        { video: true }
+    ];
+
+    let stream = null;
+
+    for (let currentConstraints of constraintsOptions) {
+        try {
+            stream = await navigator.mediaDevices.getUserMedia(currentConstraints);
+            if (stream) break;
+        } catch (e) {
+            console.warn("지정된 셋업으로 카메라 로드 실패, 다음 옵션 시도:", e);
+        }
+    }
+
+    if (stream) {
+        video.srcObject = stream;
+        video.play().catch(e => console.log("자동 재생 트리거 차단 예방:", e));
+
+        video.addEventListener('loadedmetadata', () => {
+            canvas.width = video.videoWidth || 640;
+            canvas.height = video.videoHeight || 480;
+            statusText.innerText = "카메라 연결 성공! API 키와 책 이름을 입력 후 [찾기]를 누르세요.";
+            logBox.innerText = "Gemini AI 연동 준비 중";
+        });
+    } else {
+        statusText.innerHTML = "<span style='color:red;'>카메라 권한 거부됨. [설정]에서 브라우저 카메라 권한을 확인해 주세요.</span>";
+        logBox.innerText = "Error: 사용 가능한 카메라 장치를 찾지 못했거나 사용자가 권한을 차단했습니다.";
+    }
+}
+
+// 초기화 실행
+initCamera();
+
+bookInput.addEventListener('keypress', (e) => { if(e.key === 'Enter') startSearch(); });
+apiKeyInput.addEventListener('keypress', (e) => { if(e.key === 'Enter') startSearch(); });
+searchBtn.addEventListener('click', startSearch);
+
+async function startSearch() {
+    // 동적으로 사용자가 입력한 API 키 가져오기
+    const apiKey = apiKeyInput.value.trim();
+    const targetTitle = bookInput.value.trim();
+
+    if (!apiKey) { alert("Gemini API 키를 입력하세요."); apiKeyInput.focus(); return; }
+    if (!targetTitle) { alert("책 제목을 입력하세요."); bookInput.focus(); return; }
+
+    // 다음 사용을 위해 입력받은 API 키 브라우저에 임시 저장
+    localStorage.setItem('gemini_api_key', apiKey);
+
+    // 호출 URL 동적 생성
+    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+
+    searchBtn.disabled = true;
+    searchBtn.textContent = "분석중";
+    statusText.innerHTML = `<span class='highlight'>"${targetTitle}"</span> 찾는 중...`;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    const tempCanvas = document.createElement('canvas');
+    tempCanvas.width = video.videoWidth || 640;
+    tempCanvas.height = video.videoHeight || 480;
+    tempCanvas.getContext('2d').drawImage(video, 0, 0);
+    const base64Image = tempCanvas.toDataURL('image/jpeg').split(',')[1];
+
+    const prompt = `주어진 이미지에서 책장에 꽂힌 책들 중 제목이 "${targetTitle}"인 도서를 찾아주세요.
+만약 해당 도서가 존재한다면 그 책의 영역을 감싸는 경계 상자(Bounding Box) 좌표를 [ymin, xmin, ymax, xmax] 형태로 반환해줘.
+좌표 값은 이미지 크기를 기준으로 0에서 1000 사이의 숫자로 정규화(Normalized)해야 해.
+출력은 부가 설명이나 코드 블록 없이 무조건 아래 명시된 JSON 형식으로만 응답해줘:
+{"found": true, "box": [ymin, xmin, ymax, xmax]} 또는 책을 찾지 못했다면 {"found": false}`;
+
+    const payload = {
+        contents: [{ parts: [{ text: prompt }, { inlineData: { mimeType: "image/jpeg", data: base64Image } }] }],
+        generationConfig: { responseMimeType: "application/json" }
+    };
+
+    try {
+        logBox.innerText = "Gemini 서버로 이미지를 송신하고 분석 중...";
+        const response = await fetch(apiUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+
+        if (!response.ok) {
+            const errJson = await response.json().catch(() => ({}));
+            throw new Error(`서버 응답 오류 (${response.status}): ${JSON.stringify(errJson)}`);
+        }
+
+        const data = await response.json();
+        let textResponse = data.candidates[0].content.parts[0].text;
+        textResponse = textResponse.replace(/```json|```/g, '').trim();
+
+        const result = JSON.parse(textResponse);
+
+        if (result.found && result.box) {
+            statusText.innerHTML = `🎯 <span style='color:#2ecc71; font-weight:bold;'>"${targetTitle}"</span> 발견!`;
+            logBox.innerText = `좌표: [${result.box.join(', ')}]`;
+            drawTargetUI(result.box);
+        } else {
+            statusText.innerText = `❌ "${targetTitle}" 책을 찾지 못했습니다.`;
+            logBox.innerText = "화면 각도를 조금 바꾸어 다시 시도해 보세요.";
+        }
+    } catch (error) {
+        console.error(error);
+        statusText.innerText = "오류가 발생했습니다.";
+        logBox.innerText = `에러 내용:\n${error.message}\n\n※ API 키가 올바른지, 혹은 HTTPS 환경인지 다시 확인하세요.`;
+    } finally {
+        searchBtn.disabled = false;
+        searchBtn.textContent = "찾기";
+    }
+}
+
+function drawTargetUI(box) {
+    const ymin = (box[0] / 1000) * canvas.height;
+    const xmin = (box[1] / 1000) * canvas.width;
+    const ymax = (box[2] / 1000) * canvas.height;
+    const xmax = (box[3] / 1000) * canvas.width;
+
+    const boxWidth = xmax - xmin;
+    const centerX = xmin + (boxWidth / 2);
+    const targetTopY = ymin - 8;
+
+    ctx.strokeStyle = '#2ecc71';
+    ctx.lineWidth = 4;
+    ctx.strokeRect(xmin, ymin, boxWidth, ymax - ymin);
+
+    ctx.fillStyle = '#e74c3c';
+    ctx.beginPath();
+    ctx.moveTo(centerX - 15, targetTopY - 25);
+    ctx.lineTo(centerX + 15, targetTopY - 25);
+    ctx.lineTo(centerX, targetTopY);
+    ctx.closePath();
+    ctx.fill();
+}
+</script>
+</body>
+</html>
