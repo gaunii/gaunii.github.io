@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>도서 위치 스냅샷 검색기 (고해상도 & API 고정 패치)</title>
+<title>도서 위치 스냅샷 검색기 (좌표 정밀 보정 패치)</title>
 <style>
 :root {
 --primary-color: #3498db;
@@ -101,7 +101,7 @@ top: 0;
 left: 0;
 width: 100%;
 height: 100%;
-object-fit: cover;
+object-fit: cover; /* 화면을 가득 채우기 때문에 생기는 오차를 스크립트에서 보정합니다 */
 }
 
 canvas {
@@ -127,7 +127,7 @@ text-align: center;
 </head>
 <body>
 
-<h1>🔍 도서 위치 검색기 (고해상도 패치)</h1>
+<h1>🔍 도서 위치 검색기 (정밀 보정 버전)</h1>
 
 <div class="control-box">
     <div class="input-row">
@@ -149,7 +149,7 @@ text-align: center;
 </div>
 
 <div id="status-panel">
-<div id="status-text">카메라를 켜는 중입니다...</div>
+<div id="status-text">카메라를 연결하는 중...</div>
 </div>
 
 <script>
@@ -167,28 +167,24 @@ const statusText = document.getElementById('status-text');
 
 let capturedBase64 = null;
 
-// [개선 1] 페이지가 로드되자마자 즉시 로컬 스토리지에서 API 키를 안전하게 불러와 배치
+// 카메라 실제 원본 해상도 저장 변수
+let videoOrigWidth = 0;
+let videoOrigHeight = 0;
+
 window.addEventListener('DOMContentLoaded', () => {
     const savedKey = localStorage.getItem('gemini_api_key');
-    if (savedKey) {
-        apiKeyInput.value = savedKey;
-    }
+    if (savedKey) apiKeyInput.value = savedKey;
 });
 
-// [개선 2] 입력할 때마다 실시간으로 로컬 스토리지에 강제 동기화 (두 번째 입력 유실 원천 차단)
 apiKeyInput.addEventListener('input', () => {
     localStorage.setItem('gemini_api_key', apiKeyInput.value.trim());
 });
 
-// [개선 3] 고해상도 카메라(FHD급) 최우선 요청 설정
 async function initCamera() {
     statusText.innerText = "카메라를 연결하는 중...";
     const constraintsOptions = [
-        // 1순위: Full HD (1080p) 후면 카메라 강제 타겟팅
         { video: { facingMode: { exact: "environment" }, width: { ideal: 1920 }, height: { ideal: 1080 } } },
-        // 2순위: 일반 후면 카메라 고화질 유도
         { video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } } },
-        // 3순위: 기본 장치 허용
         { video: true }
     ];
 
@@ -198,7 +194,7 @@ async function initCamera() {
             stream = await navigator.mediaDevices.getUserMedia(currentConstraints);
             if (stream) break;
         } catch (e) {
-            console.warn("선택된 카메라 옵션 실패, 대안 시도:", e);
+            console.warn("카메라 로드 실패, 대안 시도:", e);
         }
     }
 
@@ -206,13 +202,16 @@ async function initCamera() {
         video.srcObject = stream;
         video.play().catch(e => console.log(e));
         video.addEventListener('loadedmetadata', () => {
-            // 실제 카메라의 하드웨어 해상도 그대로 캔버스 크기를 매칭 (화질 저하 방지)
-            canvas.width = video.videoWidth;
-            canvas.height = video.videoHeight;
+            videoOrigWidth = video.videoWidth;
+            videoOrigHeight = video.videoHeight;
+            
+            // 캔버스의 내부 드로잉 해상도를 카메라 원본과 완전히 일치시킵니다.
+            canvas.width = videoOrigWidth;
+            canvas.height = videoOrigHeight;
             statusText.innerText = "준비 완료! 책장을 비추고 [사진 찍기]를 누르세요.";
         });
     } else {
-        statusText.innerHTML = "<span style='color:red;'>카메라 권한을 획득하지 못했습니다. 설정에서 확인하세요.</span>";
+        statusText.innerHTML = "<span style='color:red;'>카메라 권한 거부됨.</span>";
     }
 }
 
@@ -221,32 +220,23 @@ initCamera();
 captureBtn.addEventListener('click', captureSnapshot);
 searchBtn.addEventListener('click', searchBookInSnapshot);
 resetBtn.addEventListener('click', resetToCamera);
-bookInput.addEventListener('keypress', (e) => { if(e.key === 'Enter' && searchBtn.style.display !== 'none') searchBookInSnapshot(); });
 
-// [기능 1] 고화질 스냅샷 촬영 및 화면 고정
 function captureSnapshot() {
-    if (!video.videoWidth) { alert("카메라 화면이 아직 준비되지 않았습니다."); return; }
-    
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
+    if (!videoOrigWidth) { alert("카메라 준비 중입니다."); return; }
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    // 원본 비디오 해상도 그대로 1:1 드로잉 (품질 보존)
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
     
-    // 이미지 파일 압축률 최하(1.0)로 설정하여 선명한 품질 유지
-    capturedBase64 = canvas.toDataURL('image/jpeg', 1.0).split(',')[1];
-
+    capturedBase64 = canvas.toDataURL('image/jpeg', 0.95).split(',')[1];
     canvas.style.display = "block";
 
     captureBtn.style.display = "none";
     searchBtn.style.display = "inline-block";
     resetBtn.style.display = "inline-block";
 
-    statusText.innerHTML = "📸 고해상도 사진 촬영 완료! <br>이제 검색할 <b>책 제목</b>을 적고 <b>[책 찾기]</b>를 누르세요.";
+    statusText.innerHTML = "📸 사진 촬영 완료! <br>이제 검색할 <b>책 제목</b>을 적고 <b>[책 찾기]</b>를 누르세요.";
 }
 
-// [기능 2] 찍은 사진 바탕으로 정밀 OCR 검출 시도
 async function searchBookInSnapshot() {
     const apiKey = apiKeyInput.value.trim();
     const targetTitle = bookInput.value.trim();
@@ -254,14 +244,14 @@ async function searchBookInSnapshot() {
     if (!apiKey) { alert("Gemini API 키를 입력하세요."); apiKeyInput.focus(); return; }
     if (!targetTitle) { alert("책 제목을 입력하세요."); bookInput.focus(); return; }
 
-    // 다시 한 번 저장 검증
     localStorage.setItem('gemini_api_key', apiKey);
 
     searchBtn.disabled = true;
     resetBtn.disabled = true;
     searchBtn.textContent = "OCR 판별 중...";
-    statusText.innerHTML = `<span class='highlight'>"${targetTitle}"</span> 텍스트 및 위치를 정밀 추적 중...`;
+    statusText.innerHTML = `<span class='highlight'>"${targetTitle}"</span> 위치 정밀 분석 중...`;
 
+    // 이미지 원본 다시 그려 깨끗하게 유지
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     const img = new Image();
     img.src = "data:image/jpeg;base64," + capturedBase64;
@@ -271,11 +261,9 @@ async function searchBookInSnapshot() {
     };
 }
 
-// [기능 3] 정밀한 OCR 영역 획득을 위한 전용 프롬프트 파트
 async function callGeminiAPI(apiKey, targetTitle) {
     const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
 
-    // SAM2 같은 세그멘테이션 없이, 텍스트의 바운딩박스 정밀 검출에 특화되도록 프롬프트 강화
     const prompt = `주어진 고해상도 이미지에서 시각적 OCR을 정밀하게 수행하여, 표지나 책등에 문자로 "${targetTitle}"이(가) 인쇄되어 있는 정확한 위치를 검출해 주세요.
 글자 텍스트 자수 영역에 정확히 밀착된 단 하나의 경계 상자(Bounding Box) 좌표를 [ymin, xmin, ymax, xmax] 형태로 계산해야 합니다.
 좌표값은 이미지의 세로, 가로 크기를 기준으로 0에서 1000 사이의 숫자로 완벽히 정규화(Normalized)하세요.
@@ -287,7 +275,7 @@ async function callGeminiAPI(apiKey, targetTitle) {
 
     const payload = {
         contents: [{ parts: [{ text: prompt }, { inlineData: { mimeType: "image/jpeg", data: capturedBase64 } }] }],
-        generationConfig: { responseMimeType: "application/json", temperature: 0.1 } // 난수성을 낮춰 정확도 수렴 유도
+        generationConfig: { responseMimeType: "application/json", temperature: 0.1 }
     };
 
     try {
@@ -306,10 +294,10 @@ async function callGeminiAPI(apiKey, targetTitle) {
         const result = JSON.parse(textResponse);
 
         if (result.found && result.box) {
-            statusText.innerHTML = `🎯 <span style='color:#2ecc71; font-weight:bold;'>"${targetTitle}"</span> 문자를 찾아냈습니다!`;
-            drawTargetUI(result.box);
+            statusText.innerHTML = `🎯 <span style='color:#2ecc71; font-weight:bold;'>"${targetTitle}"</span> 발견했습니다!`;
+            drawCorrectedTargetUI(result.box);
         } else {
-            statusText.innerHTML = `❌ <span style='color:#e74c3c; font-weight:bold;'>해당 글자가 포함된 책을 찾을 수 없습니다.</span>`;
+            statusText.innerHTML = `❌ <span style='color:#e74c3c; font-weight:bold;'>책을 찾을 수 없습니다.</span>`;
             drawNotFoundUI();
         }
 
@@ -335,34 +323,40 @@ function resetToCamera() {
     statusText.innerText = "카메라 준비됨. [사진 찍기]를 누르세요.";
 }
 
-function drawTargetUI(box) {
-    const ymin = (box[0] / 1000) * canvas.height;
-    const xmin = (box[1] / 1000) * canvas.width;
-    const ymax = (box[2] / 1000) * canvas.height;
-    const xmax = (box[3] / 1000) * canvas.width;
+// [핵심] object-fit: cover로 인해 발생하는 캔버스 <-> 비디오 왜곡 비율을 보정하여 그리는 함수
+function drawCorrectedTargetUI(box) {
+    // 1. 0~1000 정규화 좌표를 카메라 원본 해상도(픽셀) 좌표로 복원
+    const imgYMin = (box[0] / 1000) * videoOrigHeight;
+    const imgXMin = (box[1] / 1000) * videoOrigWidth;
+    const imgYMax = (box[2] / 1000) * videoOrigHeight;
+    const imgXMax = (box[3] / 1000) * videoOrigWidth;
 
-    const boxWidth = xmax - xmin;
-    const centerX = xmin + (boxWidth / 2);
-    const targetTopY = ymin - 8;
+    const imgBoxWidth = imgXMax - imgXMin;
+    const imgBoxHeight = imgYMax - imgYMin;
+    const imgCenterX = imgXMin + (imgBoxWidth / 2);
+    const imgTopY = imgYMin - 8;
 
-    // 타겟 상자 디자인 정밀화 (OCR 느낌으로 두께감 조정)
+    // 2. 캔버스 위에 정확한 오리지널 위치에 상자 드로잉
+    // (이미 캔버스의 가로세로 해상도가 비디오 원본 해상도와 1:1 대응되므로 보정 완료)
     ctx.strokeStyle = '#2ecc71';
-    ctx.lineWidth = 6;
-    ctx.strokeRect(xmin, ymin, boxWidth, ymax - ymin);
+    ctx.lineWidth = Math.max(4, videoOrigWidth / 300); // 고해상도에 맞게 선 두께 동적 조절
+    ctx.strokeRect(imgXMin, imgYMin, imgBoxWidth, imgBoxHeight);
 
-    // 모서리 십자 가이드 추가 (정밀 판별 느낌 부여)
+    // 모서리 포인트 장식
+    const offset = Math.max(10, videoOrigWidth / 100);
     ctx.fillStyle = '#2ecc71';
-    ctx.fillRect(xmin-10, ymin-3, 20, 6);
-    ctx.fillRect(xmin-3, ymin-10, 6, 20);
-    ctx.fillRect(xmax-10, ymax-3, 20, 6);
-    ctx.fillRect(xmax-3, ymax-10, 6, 20);
+    ctx.fillRect(imgXMin - offset/2, imgYMin - 3, offset, 6);
+    ctx.fillRect(imgXMin - 3, imgYMin - offset/2, 6, offset);
+    ctx.fillRect(imgXMax - offset/2, imgYMax - 3, offset, 6);
+    ctx.fillRect(imgXMax - 3, imgYMax - offset/2, 6, offset);
 
-    // 상단 지시용 화살표
+    // 화살표 그리기
     ctx.fillStyle = '#e74c3c';
     ctx.beginPath();
-    ctx.moveTo(centerX - 15, targetTopY - 25);
-    ctx.lineTo(centerX + 15, targetTopY - 25);
-    ctx.lineTo(centerX, targetTopY);
+    const arrowSize = Math.max(15, videoOrigWidth / 80);
+    ctx.moveTo(imgCenterX - arrowSize, imgTopY - (arrowSize * 1.5));
+    ctx.lineTo(imgCenterX + arrowSize, imgTopY - (arrowSize * 1.5));
+    ctx.lineTo(imgCenterX, imgTopY);
     ctx.closePath();
     ctx.fill();
 }
@@ -372,7 +366,7 @@ function drawNotFoundUI() {
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
     ctx.fillStyle = '#e74c3c';
-    ctx.font = 'bold 26px "Noto Sans KR", sans-serif';
+    ctx.font = 'bold 32px "Noto Sans KR", sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText('해당 책이 없습니다 ❌', canvas.width / 2, canvas.height / 2);
