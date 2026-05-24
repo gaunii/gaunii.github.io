@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>도서 위치 스냅샷 검색기 (좌표 정렬 최종 패치)</title>
+<title>도서 위치 스냅샷 검색기 (화각 동적 매칭 버전)</title>
 <style>
 :root {
 --primary-color: #3498db;
@@ -84,11 +84,11 @@ transition: background-color 0.2s;
 #search-btn { background-color: var(--search-color); display: none; }
 #reset-btn { background-color: var(--reset-color); display: none; }
 
+/* 고정된 고정비(4/3)를 제거하고 카메라 원본 비율을 따르도록 수정 */
 #display-container {
 position: relative;
 width: 100%;
 max-width: 500px;
-aspect-ratio: 4 / 3;
 border-radius: 12px;
 overflow: hidden;
 box-shadow: 0 8px 20px rgba(0,0,0,0.15);
@@ -103,9 +103,9 @@ width: 100%;
 height: 100%;
 }
 
-/* object-fit 차이로 인한 왜곡을 막기 위해 두 요소 모두 fill로 일치시킵니다 */
-video { object-fit: fill; }
-canvas { object-fit: fill; z-index: 1; display: none; }
+/* 찌그러짐을 방지하기 위해 원본 왜곡 없는 contain 속성 부여 */
+video { object-fit: contain; }
+canvas { object-fit: contain; z-index: 1; display: none; }
 
 #status-panel {
 width: 100%;
@@ -125,7 +125,7 @@ text-align: center;
 </head>
 <body>
 
-<h1>🔍 도서 위치 검색기 (정밀 매핑)</h1>
+<h1>🔍 도서 위치 검색기 (비율 매칭)</h1>
 
 <div class="control-box">
     <div class="input-row">
@@ -147,10 +147,11 @@ text-align: center;
 </div>
 
 <div id="status-panel">
-<div id="status-text">카메라 연결을 요청하는 중입니다...</div>
+<div id="status-text">카메라 연결을 준비 중입니다...</div>
 </div>
 
 <script>
+const container = document.getElementById('display-container');
 const video = document.getElementById('webcam');
 const canvas = document.getElementById('overlay');
 const ctx = canvas.getContext('2d');
@@ -195,7 +196,13 @@ async function initCamera() {
     if (stream) {
         video.srcObject = stream;
         video.play().catch(e => console.log(e));
+        
         video.addEventListener('loadedmetadata', () => {
+            // [핵심 변경] 카메라의 실제 가로세로 비율을 계산하여 화면 박스의 비율을 동적으로 강제 맞춤
+            const aspect = video.videoHeight / video.videoWidth;
+            const containerWidth = container.clientWidth;
+            container.style.height = (containerWidth * aspect) + "px";
+            
             statusText.innerText = "준비 완료! 책장을 비추고 [사진 찍기]를 누르세요.";
         });
     } else {
@@ -205,32 +212,38 @@ async function initCamera() {
 
 initCamera();
 
+// 화면 크기가 변할 때(회전 등) 비율을 재유지하기 위한 리사이즈 핸들러
+window.addEventListener('resize', () => {
+    if (video.videoWidth) {
+        const aspect = video.videoHeight / video.videoWidth;
+        container.style.height = (container.clientWidth * aspect) + "px";
+    }
+});
+
 captureBtn.addEventListener('click', captureSnapshot);
 searchBtn.addEventListener('click', searchBookInSnapshot);
 resetBtn.addEventListener('click', resetToCamera);
 
-// [수정] 화면에 실제로 렌더링된 사각형 크기 기반으로 촬영 해상도를 동기화
+// 사진 찍기: 카메라 원본 해상도 100% 품질로 캡처하여 왜곡 원천 차단
 function captureSnapshot() {
-    // 겉보기에 보이는 영역의 실제 가로세로 크기 픽셀을 그대로 획득
-    const displayWidth = video.clientWidth;
-    const displayHeight = video.clientHeight;
+    if (!video.videoWidth) { alert("카메라 준비 중입니다."); return; }
 
-    // 캔버스의 내부 좌표계를 눈에 보이는 크기와 1:1로 일치시킴
-    canvas.width = displayWidth;
-    canvas.height = displayHeight;
+    // 캔버스의 실제 내부 드로잉 픽셀 크기를 카메라 하드웨어 크기와 1:1로 일치시킴
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    // 화면 크기 그대로 압축 캡처하여 왜곡을 소멸시킴
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
     
-    capturedBase64 = canvas.toDataURL('image/jpeg', 0.9).split(',')[1];
+    // 압축 없는 원본 화질 비율로 추출
+    capturedBase64 = canvas.toDataURL('image/jpeg', 1.0).split(',')[1];
     canvas.style.display = "block";
 
     captureBtn.style.display = "none";
     searchBtn.style.display = "inline-block";
     resetBtn.style.display = "inline-block";
 
-    statusText.innerHTML = "📸 사진 촬영 완료! <br>[책 찾기] 버튼을 누르면 이 화면 기반으로 추적합니다.";
+    statusText.innerHTML = "📸 왜곡 없는 원본 사진 촬영 완료! <br>[책 찾기] 버튼을 누르세요.";
 }
 
 async function searchBookInSnapshot() {
@@ -247,7 +260,6 @@ async function searchBookInSnapshot() {
     searchBtn.textContent = "OCR 판별 중...";
     statusText.innerHTML = `<span class='highlight'>"${targetTitle}"</span> 위치 정밀 분석 중...`;
 
-    // 이미지 리로드 후 원본 보존 보장
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     const img = new Image();
     img.src = "data:image/jpeg;base64," + capturedBase64;
@@ -319,7 +331,7 @@ function resetToCamera() {
     statusText.innerText = "카메라 준비됨. [사진 찍기]를 누르세요.";
 }
 
-// 이제 내부 해상도와 눈에 보이는 화면 크기가 완전히 1:1이므로 정상적인 위치에 매핑됩니다.
+// 카메라 실제 픽셀과 캔버스 내부 드로잉 픽셀이 1:1로 매핑되어 오차가 소멸합니다.
 function drawTargetUI(box) {
     const ymin = (box[0] / 1000) * canvas.height;
     const xmin = (box[1] / 1000) * canvas.width;
@@ -330,15 +342,17 @@ function drawTargetUI(box) {
     const centerX = xmin + (boxWidth / 2);
     const targetTopY = ymin - 8;
 
+    // 고해상도 화질에 맞게 테두리 선 굵기 자동 확보
     ctx.strokeStyle = '#2ecc71';
-    ctx.lineWidth = 5;
+    ctx.lineWidth = Math.max(4, canvas.width / 200); 
     ctx.strokeRect(xmin, ymin, boxWidth, ymax - ymin);
 
-    // 화살표 가이드 UI
+    // 화살표 가이드 UI 크기 동적 조절
     ctx.fillStyle = '#e74c3c';
     ctx.beginPath();
-    ctx.moveTo(centerX - 15, targetTopY - 25);
-    ctx.lineTo(centerX + 15, targetTopY - 25);
+    const arrowSize = Math.max(15, canvas.width / 60);
+    ctx.moveTo(centerX - arrowSize, targetTopY - (arrowSize * 1.3));
+    ctx.lineTo(centerX + arrowSize, targetTopY - (arrowSize * 1.3));
     ctx.lineTo(centerX, targetTopY);
     ctx.closePath();
     ctx.fill();
@@ -349,7 +363,7 @@ function drawNotFoundUI() {
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
     ctx.fillStyle = '#e74c3c';
-    ctx.font = 'bold 24px "Noto Sans KR", sans-serif';
+    ctx.font = 'bold 36px "Noto Sans KR", sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText('해당 책이 없습니다 ❌', canvas.width / 2, canvas.height / 2);
