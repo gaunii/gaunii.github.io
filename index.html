@@ -68,14 +68,13 @@
 
   <script>
     let streamRef = null;
-    let isProcessing = false; // 중복 호출 방지용 플래그
+    let isProcessing = false;
     const video = document.getElementById('video');
     const canvas = document.getElementById('canvas');
     const mask = document.getElementById('mask');
     const statusText = document.getElementById('statusText');
     const actionBtn = document.getElementById('actionBtn');
 
-    // [카메라 초기화]
     async function initCamera() {
       try {
         if (streamRef) {
@@ -96,9 +95,8 @@
       }
     }
 
-    // [촬영 및 Gemini API 호출]
     async function captureAndSearch() {
-      if (isProcessing) return; // 이미 처리 중이면 대기
+      if (isProcessing) return;
 
       const apiKey = document.getElementById('apiKey').value.trim();
       const targetWord = document.getElementById('targetWord').value.trim();
@@ -106,22 +104,33 @@
       if (!apiKey) { alert("API Key를 입력해주세요."); return; }
       if (!targetWord) { alert("검색할 단어를 입력해주세요."); return; }
 
-      // UI 락 가동
       isProcessing = true;
       actionBtn.disabled = true;
-      statusText.innerText = "이미지 분석 중... 잠시만 기다려주세요.";
+      statusText.innerText = "이미지 압축 및 분석 중... 잠시만 기다려주세요.";
       statusText.style.color = "#3498db";
       mask.style.clipPath = "polygon(0 0, 0 0, 0 0, 0 0)"; 
 
-      // 1. 비디오 화면 캡처
+      // 1. [핵심 변경] 비디오 화면 캡처 및 최대 가로 800px로 압축 리사이징
       const ctx = canvas.getContext('2d');
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-      const base64Image = canvas.toDataURL('image/jpeg').split(',')[1];
+      const MAX_WIDTH = 800;
+      let width = video.videoWidth;
+      let height = video.videoHeight;
 
-      // 2. 구조화된 출력 스키마 정의
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+      // 원본 비율을 유지하면서 가로 폭을 800px로 스케일 다운
+      if (width > MAX_WIDTH) {
+        height *= MAX_WIDTH / width;
+        width = MAX_WIDTH;
+      }
+
+      canvas.width = width;
+      canvas.height = height;
+      ctx.drawImage(video, 0, 0, width, height);
+      
+      // 이미지 화질을 0.7(70%)로 낮춰 용량을 기존 대비 10% 수준으로 초경량화
+      const base64Image = canvas.toDataURL('image/jpeg', 0.7).split(',')[1];
+
+      // 2. [핵심 변경] 모델명 gemini-2.5-flash 엔드포인트 적용
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
       const payload = {
         contents: [{
           parts: [
@@ -153,7 +162,6 @@
         }
       };
 
-      // 3. API 호출 파트
       try {
         const response = await fetch(url, {
           method: 'POST',
@@ -162,7 +170,7 @@
         });
         
         if (!response.ok) {
-          throw new Error(`API 에러 발생 (Status: ${response.status}). 잠시 후 다시 시도해 주세요.`);
+          throw new Error(`API 에러 발생 (Status: ${response.status}). 트래픽 한도 초과일 수 있으니 잠시 후 다시 시도해 주세요.`);
         }
 
         const result = await response.json();
@@ -170,31 +178,28 @@
         const data = JSON.parse(jsonText);
 
         if (data.target_found && data.polygon && data.polygon.length === 4) {
-          // 비디오 정지 (화면 얼림)
-          video.pause();
+          video.pause(); // 화면 정지
           
-          // %값으로 변환하여 CSS에 주입
+          // 정규화 좌표 % 치환 매핑
           const points = data.polygon.map(p => `${(p.x * 100).toFixed(2)}% ${(p.y * 100).toFixed(2)}%`).join(', ');
           mask.style.clipPath = `polygon(${points})`;
           
           statusText.innerText = `"${targetWord}" 위치를 성공적으로 마스킹했습니다!`;
           statusText.style.color = "#2ecc71";
           
-          // [해결 포인트] 다시 촬영 버튼 활성화 및 안전한 카메라 재개 세팅
           actionBtn.disabled = false;
           actionBtn.innerText = "🔄 다시 찍기";
           actionBtn.onclick = async () => {
-            actionBtn.disabled = true; // 렌즈가 깨어나는 동안 버튼 임시 잠금
-            mask.style.clipPath = "polygon(0 0, 0 0, 0 0, 0 0)"; // 마스크 초기화
+            actionBtn.disabled = true;
+            mask.style.clipPath = "polygon(0 0, 0 0, 0 0, 0 0)";
             
-            await video.play(); // 카메라 다시 재생
+            await video.play();
             
-            // 💡 렌즈가 완전히 열리고 버퍼가 채워질 수 있도록 500ms 지연 시간을 줌
             setTimeout(() => {
               actionBtn.innerText = "🎯 사진 찍고 책 찾기";
               actionBtn.onclick = captureAndSearch;
               actionBtn.disabled = false;
-              isProcessing = false; // 플래그 해제
+              isProcessing = false;
               statusText.innerText = "카메라가 다시 활성화되었습니다. 촬영해 보세요.";
               statusText.style.color = "#2ecc71";
             }, 500);
@@ -212,7 +217,6 @@
       }
     }
 
-    // 에러 발생 시 UI 상태 초기화용 공통 유틸 함수
     function resetControlState() {
       isProcessing = false;
       actionBtn.disabled = false;
