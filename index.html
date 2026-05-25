@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>도서 자동 추출기 (Gemini AI 리스트업)</title>
+<title>도서 자동 추출기 (일회성 입력 보안 버전)</title>
 <style>
 :root {
 --primary-color: #3498db;
@@ -57,6 +57,8 @@ border-radius: 30px;
 outline: none;
 box-sizing: border-box;
 }
+
+input:focus { border-color: var(--primary-color); }
 
 .btn {
 padding: 12px 20px;
@@ -193,14 +195,8 @@ const bookList = document.getElementById('book-list');
 
 let capturedBase64 = null;
 
-window.addEventListener('DOMContentLoaded', () => {
-    const savedKey = localStorage.getItem('gemini_api_key');
-    if (savedKey) apiKeyInput.value = savedKey;
-});
-
-apiKeyInput.addEventListener('input', () => {
-    localStorage.setItem('gemini_api_key', apiKeyInput.value.trim());
-});
+// [보안 삭제] window 로드 시 localStorage에서 불러오는 코드 완전 제거
+// [보안 삭제] input 입력 시 localStorage에 저장하는 코드 완전 제거
 
 async function initCamera() {
     statusText.innerText = "카메라를 연결하는 중...";
@@ -226,7 +222,7 @@ async function initCamera() {
         video.addEventListener('loadedmetadata', () => {
             const aspect = video.videoHeight / video.videoWidth;
             container.style.height = (container.clientWidth * aspect) + "px";
-            statusText.innerText = "준비 완료! [사진 찍기]를 누르세요.";
+            statusText.innerText = "준비 완료! API Key 입력 후 [사진 찍기]를 누르세요.";
         });
     } else {
         statusText.innerHTML = "<span style='color:red;'>카메라 권한 거부됨.</span>";
@@ -256,6 +252,7 @@ function captureSnapshot() {
 }
 
 async function extractAllBooks() {
+    // 버튼을 누른 이 시점 인풋창에 적혀있는 값만 딱 한 번 가져와 메모리에서 쓰고 버립니다.
     const apiKey = apiKeyInput.value.trim();
     if (!apiKey) { alert("Gemini API 키를 입력하세요."); apiKeyInput.focus(); return; }
 
@@ -308,7 +305,7 @@ async function extractAllBooks() {
     } catch (error) {
         console.error(error);
         statusText.innerHTML = `<span style='color:red;'>오류 발생: ${error.message}</span>`;
-    } {
+    } finally { // 누락되었던 문법 에러 수정 완료
         searchBtn.disabled = false;
         resetBtn.disabled = false;
         searchBtn.textContent = "🔍 사진 속 모든 책 추출";
