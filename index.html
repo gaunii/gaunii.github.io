@@ -3,12 +3,11 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>도서 제목 전체 추출기 (무료 로컬 OCR)</title>
-<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+<title>도서 위치 스냅샷 검색기 (구글 API 최종 완성본)</title>
 <style>
 :root {
 --primary-color: #3498db;
---search-color: #9b59b6; /* 전체 추출 느낌의 보라색 */
+--search-color: #2ecc71;
 --reset-color: #e74c3c;
 --bg-color: #f5f6fa;
 --container-bg: #ffffff;
@@ -49,8 +48,25 @@ box-sizing: border-box;
   gap: 8px;
 }
 
+input {
+flex: 1;
+padding: 10px 15px;
+font-size: 0.95rem;
+border: 2px solid #ced4da;
+border-radius: 30px;
+outline: none;
+box-sizing: border-box;
+}
+
+input:focus { border-color: var(--primary-color); }
+
+#api-key-input {
+border-color: #34495e;
+background-color: #f8f9fa;
+}
+
 .btn {
-padding: 12px 20px;
+padding: 10px 20px;
 font-size: 0.95rem;
 font-weight: bold;
 color: #fff;
@@ -76,7 +92,6 @@ border-radius: 12px;
 overflow: hidden;
 box-shadow: 0 8px 20px rgba(0,0,0,0.15);
 background-color: #000;
-margin-bottom: 15px;
 }
 
 video, canvas {
@@ -87,12 +102,14 @@ width: 100%;
 height: 100%;
 }
 
+/* 찌그러짐을 없애고 정확한 정렬 매핑을 위해 contain 적용 */
 video { object-fit: contain; }
 canvas { object-fit: contain; z-index: 1; display: none; }
 
 #status-panel {
 width: 100%;
 max-width: 500px;
+margin-top: 12px;
 background: var(--container-bg);
 padding: 12px 15px;
 border-radius: 10px;
@@ -100,57 +117,25 @@ border: 1px solid #dcdde1;
 box-sizing: border-box;
 font-size: 0.9rem;
 text-align: center;
-margin-bottom: 15px;
 }
 
-/* 결과 리스트가 노출될 커스텀 박스 */
-#result-box {
-width: 100%;
-max-width: 500px;
-background: #ffffff;
-border: 2px solid #1abc9c;
-border-radius: 12px;
-padding: 15px;
-box-sizing: border-box;
-display: none; /* 결과가 나오면 노출 */
-}
-
-#result-box h3 {
-margin-top: 0;
-margin-bottom: 10px;
-font-size: 1.1rem;
-color: #1abc9c;
-border-bottom: 1px solid #eee;
-padding-bottom: 5px;
-}
-
-#book-list {
-list-style: none;
-padding-left: 0;
-margin: 0;
-text-align: left;
-max-height: 250px;
-overflow-y: auto;
-}
-
-#book-list li {
-padding: 6px 10px;
-border-bottom: 1px style dashed #f1f2f6;
-font-size: 0.95rem;
-color: #333;
-}
-
-#book-list li:last-child { border-bottom: none; }
+.highlight { color: #e74c3c; font-weight: bold; }
 </style>
 </head>
 <body>
 
-<h1>📚 도서 제목 추출기 (리스트업 버전)</h1>
+<h1>🔍 도서 위치 검색기 (Gemini AI)</h1>
 
 <div class="control-box">
+    <div class="input-row">
+        <input type="password" id="api-key-input" autocomplete="new-password" placeholder="Gemini API Key를 입력하세요">
+    </div>
+    <div class="input-row">
+        <input type="text" id="book-input" placeholder="책 제목 입력 (예: 완득이)">
+    </div>
     <div class="input-row" id="btn-group">
         <button id="capture-btn" class="btn">📸 사진 찍기</button>
-        <button id="search-btn" class="btn">🔍 전체 책 제목 추출</button>
+        <button id="search-btn" class="btn">🔍 책 찾기</button>
         <button id="reset-btn" class="btn">🔄 다시 찍기</button>
     </div>
 </div>
@@ -164,32 +149,38 @@ color: #333;
 <div id="status-text">카메라 연결을 준비 중입니다...</div>
 </div>
 
-<div id="result-box">
-    <h3>📋 인식된 텍스트 목록</h3>
-    <ul id="book-list"></ul>
-</div>
-
 <script>
 const container = document.getElementById('display-container');
 const video = document.getElementById('webcam');
 const canvas = document.getElementById('overlay');
 const ctx = canvas.getContext('2d');
 
+const apiKeyInput = document.getElementById('api-key-input');
+const bookInput = document.getElementById('book-input');
+
 const captureBtn = document.getElementById('capture-btn');
 const searchBtn = document.getElementById('search-btn');
 const resetBtn = document.getElementById('reset-btn');
 const statusText = document.getElementById('status-text');
 
-const resultBox = document.getElementById('result-box');
-const bookList = document.getElementById('book-list');
+let capturedBase64 = null;
 
-let capturedImageElement = null; 
+// 로드 시 스토리지에서 안전하게 키 복구
+window.addEventListener('DOMContentLoaded', () => {
+    const savedKey = localStorage.getItem('gemini_api_key');
+    if (savedKey) apiKeyInput.value = savedKey;
+});
+
+// 입력창 입력 즉시 스토리지에 동기화 백업 (유실 차단)
+apiKeyInput.addEventListener('input', () => {
+    localStorage.setItem('gemini_api_key', apiKeyInput.value.trim());
+});
 
 async function initCamera() {
     statusText.innerText = "카메라를 연결하는 중...";
     const constraintsOptions = [
-        { video: { facingMode: "environment", width: { ideal: 1920 }, height: { ideal: 1080 } } },
         { video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } } },
+        { video: { facingMode: "environment" } },
         { video: true }
     ];
 
@@ -199,17 +190,19 @@ async function initCamera() {
             stream = await navigator.mediaDevices.getUserMedia(currentConstraints);
             if (stream) break;
         } catch (e) {
-            console.warn("카메라 셋업 실패:", e);
+            console.warn("카메라 초기화 실패:", e);
         }
     }
 
     if (stream) {
         video.srcObject = stream;
         video.play().catch(e => console.log(e));
+        
         video.addEventListener('loadedmetadata', () => {
+            // 하드웨어 비율 감지하여 UI 프레임 강제 동기화
             const aspect = video.videoHeight / video.videoWidth;
             container.style.height = (container.clientWidth * aspect) + "px";
-            statusText.innerText = "준비 완료! 책장을 비추고 [사진 찍기]를 누르세요.";
+            statusText.innerText = "준비 완료! 책장을 정면에서 비추고 [사진 찍기]를 누르세요.";
         });
     } else {
         statusText.innerHTML = "<span style='color:red;'>카메라 권한 거부됨.</span>";
@@ -226,89 +219,93 @@ window.addEventListener('resize', () => {
 });
 
 captureBtn.addEventListener('click', captureSnapshot);
-searchBtn.addEventListener('click', extractAllText);
+searchBtn.addEventListener('click', searchBookInSnapshot);
 resetBtn.addEventListener('click', resetToCamera);
+bookInput.addEventListener('keypress', (e) => { if(e.key === 'Enter' && searchBtn.style.display !== 'none') searchBookInSnapshot(); });
 
-// 텍스트 검출용 흑백 고대비 필터
-function enhanceTextContrast(context, width, height) {
-    const imageData = context.getImageData(0, 0, width, height);
-    const data = imageData.data;
-    for (let i = 0; i < data.length; i += 4) {
-        const gray = 0.299 * data[i] + 0.587 * data[i+1] + 0.114 * data[i+2];
-        const v = (gray > 120) ? 255 : 0; // 이진화 경계선 조절
-        data[i] = v; data[i+1] = v; data[i+2] = v;
-    }
-    context.putImageData(imageData, 0, 0);
-}
-
+// 1단계: 원본 화질 캡처 및 고정
 function captureSnapshot() {
     if (!video.videoWidth) { alert("카메라 준비 중입니다."); return; }
+
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
+
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
     
-    capturedImageElement = new Image();
-    capturedImageElement.src = canvas.toDataURL('image/jpeg', 1.0);
+    capturedBase64 = canvas.toDataURL('image/jpeg', 1.0).split(',')[1];
     canvas.style.display = "block";
 
     captureBtn.style.display = "none";
     searchBtn.style.display = "inline-block";
     resetBtn.style.display = "inline-block";
-    statusText.innerHTML = "📸 사진이 고정되었습니다. <br><b>[전체 책 제목 추출]</b> 버튼을 누르세요.";
+
+    statusText.innerHTML = "📸 사진 촬영 완료! <br>찾으려는 <b>책 제목</b>을 적고 <b>[책 찾기]</b>를 누르세요.";
 }
 
-// 사진 속 글자들을 전부 분석하여 리스트로 나열하는 함수
-async function extractAllText() {
+// 2단계: 정지 화상 기준 구글 AI 분석 요청
+async function searchBookInSnapshot() {
+    const apiKey = apiKeyInput.value.trim();
+    const targetTitle = bookInput.value.trim();
+
+    if (!apiKey) { alert("Gemini API 키를 입력하세요."); apiKeyInput.focus(); return; }
+    if (!targetTitle) { alert("책 제목을 입력하세요."); bookInput.focus(); return; }
+
+    localStorage.setItem('gemini_api_key', apiKey);
+
     searchBtn.disabled = true;
     resetBtn.disabled = true;
-    searchBtn.textContent = "글자 읽는 중...";
-    statusText.innerHTML = `⚙️ 자체 OCR 엔진으로 이미지 전체의 텍스트를 판독하고 있습니다...`;
+    searchBtn.textContent = "AI 탐색 중...";
+    statusText.innerHTML = `🧠 구글 고성능 비전 AI가 <span class='highlight'>"${targetTitle}"</span>의 정확한 위치를 검출하고 있습니다...`;
 
-    // 리스트 초기화 및 숨김
-    bookList.innerHTML = "";
-    resultBox.style.display = "none";
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    const img = new Image();
+    img.src = "data:image/jpeg;base64," + capturedBase64;
+    img.onload = async function() {
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        await callGeminiAPI(apiKey, targetTitle);
+    };
+}
 
-    const ocrCanvas = document.createElement('canvas');
-    ocrCanvas.width = canvas.width; ocrCanvas.height = canvas.height;
-    const ocrCtx = ocrCanvas.getContext('2d');
-    ocrCtx.drawImage(capturedImageElement, 0, 0, ocrCanvas.width, ocrCanvas.height);
-    enhanceTextContrast(ocrCtx, ocrCanvas.width, ocrCanvas.height);
+async function callGeminiAPI(apiKey, targetTitle) {
+    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
+
+    // 세로쓰기/가로쓰기 통합 정밀 바운딩박스 검출 프롬프트
+    const prompt = `주어진 고해상도 이미지에서 표지나 책등에 문자로 "${targetTitle}"이(가) 인쇄되어 있는 정확한 도서 위치를 검출해 주세요.
+해당 도서 영역을 감싸는 경계 상자(Bounding Box) 좌표를 [ymin, xmin, ymax, xmax] 형태로 계산해야 합니다.
+좌표값은 이미지의 세로, 가로 크기를 기준으로 0에서 1000 사이의 숫자로 정규화(Normalized)하세요.
+
+출력은 다른 설명문구나 마크다운 코드블록(\`\`\`)을 일절 배제하고 오직 규격화된 아래의 JSON 데이터 포맷 하나만 반환하세요:
+{"found": true, "box": [ymin, xmin, ymax, xmax]}
+만약 이미지 내에 해당 글자가 인쇄된 도서가 결단코 존재하지 않는다면 다음 포맷으로만 출력하세요:
+{"found": false}`;
+
+    const payload = {
+        contents: [{ parts: [{ text: prompt }, { inlineData: { mimeType: "image/jpeg", data: capturedBase64 } }] }],
+        generationConfig: { responseMimeType: "application/json", temperature: 0.1 }
+    };
 
     try {
-        const worker = await Tesseract.createWorker(['kor', 'eng']);
-        const ret = await worker.recognize(ocrCanvas);
-        const lines = ret.data.lines; // 단어 조각 대신 '줄(Line)' 단위로 가져와 결합력 향상
-        await worker.terminate();
+        const response = await fetch(apiUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
 
-        const detectedTitles = [];
+        if (!response.ok) throw new Error(`서버 에러 (${response.status})`);
 
-        if (lines && lines.length > 0) {
-            lines.forEach(line => {
-                // 의미 없는 공백 및 특수문자 단독 무리 필터링
-                const cleanText = line.text.trim();
-                
-                // 글자 수가 너무 적거나 깨진 기호 문자 필터 조건문
-                if (cleanText.length > 1 && !/^[^ㄱ-ㅎㅏ-ㅣ가-힣a-zA-Z0-9]+$/.test(cleanText)) {
-                    detectedTitles.push(cleanText);
-                }
-            });
-        }
+        const data = await response.json();
+        let textResponse = data.candidates[0].content.parts[0].text;
+        textResponse = textResponse.replace(/```json|```/g, '').trim();
 
-        if (detectedTitles.length > 0) {
-            statusText.innerHTML = `🎯 총 <b>${detectedTitles.length}개</b>의 텍스트 영역을 검출했습니다.`;
-            
-            // 중복 제거 후 리스트에 삽입
-            const uniqueTitles = [...new Set(detectedTitles)];
-            uniqueTitles.forEach(title => {
-                const li = document.createElement('li');
-                li.innerText = "📖 " + title;
-                bookList.appendChild(li);
-            });
-            
-            resultBox.style.display = "block"; // 결과 창 표시
+        const result = JSON.parse(textResponse);
+
+        if (result.found && result.box) {
+            statusText.innerHTML = `🎯 구글 AI가 <span style='color:#2ecc71; font-weight:bold;'>"${targetTitle}"</span> 위치를 찾아냈습니다!`;
+            drawTargetUI(result.box);
         } else {
-            statusText.innerHTML = `❌ <span style='color:#e74c3c; font-weight:bold;'>인식된 글자가 없습니다. 더 밝고 가까운 위치에서 찍어보세요.</span>`;
+            statusText.innerHTML = `❌ <span style='color:#e74c3c; font-weight:bold;'>사진 안에서 해당 책을 찾지 못했습니다.</span>`;
+            drawNotFoundUI();
         }
 
     } catch (error) {
@@ -317,21 +314,58 @@ async function extractAllText() {
     } finally {
         searchBtn.disabled = false;
         resetBtn.disabled = false;
-        searchBtn.textContent = "🔍 전체 책 제목 추출";
+        searchBtn.textContent = "🔍 책 찾기";
     }
 }
 
+// 3단계: 리셋 후 실시간 복구
 function resetToCamera() {
-    capturedImageElement = null;
+    capturedBase64 = null;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     canvas.style.display = "none";
-    resultBox.style.display = "none";
-    bookList.innerHTML = "";
 
     captureBtn.style.display = "inline-block";
     searchBtn.style.display = "none";
     resetBtn.style.display = "none";
-    statusText.innerText = "카메라 재개됨. 새로운 책장을 찍어보세요.";
+
+    statusText.innerText = "카메라가 재개되었습니다. 새로운 각도에서 [사진 찍기]를 누르세요.";
+}
+
+function drawTargetUI(box) {
+    const ymin = (box[0] / 1000) * canvas.height;
+    const xmin = (box[1] / 1000) * canvas.width;
+    const ymax = (box[2] / 1000) * canvas.height;
+    const xmax = (box[3] / 1000) * canvas.width;
+
+    const boxWidth = xmax - xmin;
+    const centerX = xmin + (boxWidth / 2);
+    const targetTopY = ymin - 8;
+
+    // 고화질에 묻히지 않는 최적의 선 두께 연산
+    ctx.strokeStyle = '#2ecc71';
+    ctx.lineWidth = Math.max(5, canvas.width / 180); 
+    ctx.strokeRect(xmin, ymin, boxWidth, ymax - ymin);
+
+    // 하향 가이드 화살표 UI
+    ctx.fillStyle = '#e74c3c';
+    ctx.beginPath();
+    const arrowSize = Math.max(15, canvas.width / 55);
+    ctx.moveTo(centerX - arrowSize, targetTopY - (arrowSize * 1.3));
+    ctx.lineTo(centerX + arrowSize, targetTopY - (arrowSize * 1.3));
+    ctx.lineTo(centerX, targetTopY);
+    ctx.closePath();
+    ctx.fill();
+}
+
+function drawNotFoundUI() {
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    ctx.fillStyle = '#e74c3c';
+    ctx.font = 'bold 36px "Noto Sans KR", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('해당 책이 없습니다 ❌', canvas.width / 2, canvas.height / 2);
 }
 </script>
 </body>
